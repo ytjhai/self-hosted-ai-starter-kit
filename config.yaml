@@ -51,4 +51,4 @@ litellm_settings:
   drop_params: True
   set_verbose: True
   general_settings:
-    database_connection_pool_limit: 8
+    database_connection_pool_limit: 4
