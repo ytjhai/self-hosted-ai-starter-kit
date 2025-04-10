@@ -93,9 +93,7 @@ services:
       start_period: 40s  # Wait 40 seconds after container start before beginning health checks
 
   caddy:
-    build: 
-      context: .
-      dockerfile: Dockerfile
+    image: caddy:latest
     hostname: caddy
     container_name: caddy
     networks: ['demo']
