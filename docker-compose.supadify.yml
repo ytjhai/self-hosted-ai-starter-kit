@@ -1,0 +1,770 @@
+# Combined Docker Compose for Supabase and Dify
+# Using Supabase Postgres (with pgvector) as the shared database.
+
+# --- IMPORTANT ---
+# You MUST create a .env file combining variables from both original setups.
+# Ensure the following are defined and consistent where necessary:
+# POSTGRES_PASSWORD, POSTGRES_PORT, POSTGRES_DB (used by Supabase core)
+# DIFY_DB_DATABASE (e.g., dify - the database name for Dify within the shared Postgres)
+# JWT_SECRET, ANON_KEY, SERVICE_ROLE_KEY, SITE_URL, API_EXTERNAL_URL, etc. (Supabase)
+# REDIS_PASSWORD, SECRET_KEY, SANDBOX_API_KEY, etc. (Dify)
+# ... and all other required variables from both original .env files.
+
+name: supabase-dify-stack
+
+x-shared-dify-env: &shared-api-worker-env
+  # --- Dify Core Configuration ---
+  CONSOLE_API_URL: ${CONSOLE_API_URL:-}
+  CONSOLE_WEB_URL: ${CONSOLE_WEB_URL:-}
+  SERVICE_API_URL: ${SERVICE_API_URL:-}
+  APP_API_URL: ${APP_API_URL:-}
+  APP_WEB_URL: ${APP_WEB_URL:-}
+  FILES_URL: ${FILES_URL:-}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_FILE: ${LOG_FILE:-/app/logs/server.log}
+  LOG_FILE_MAX_SIZE: ${LOG_FILE_MAX_SIZE:-20}
+  LOG_FILE_BACKUP_COUNT: ${LOG_FILE_BACKUP_COUNT:-5}
+  LOG_DATEFORMAT: ${LOG_DATEFORMAT:-%Y-%m-%d %H:%M:%S}
+  LOG_TZ: ${LOG_TZ:-UTC}
+  DEBUG: ${DEBUG:-false}
+  FLASK_DEBUG: ${FLASK_DEBUG:-false}
+  SECRET_KEY: ${SECRET_KEY:-sk-9f73s3ljTXVcMT3Blb3ljTqtsKiGHXVcMT3BlbkFJLK7U} # Use a strong, unique key
+  INIT_PASSWORD: ${INIT_PASSWORD:-}
+  DEPLOY_ENV: ${DEPLOY_ENV:-PRODUCTION}
+  CHECK_UPDATE_URL: ${CHECK_UPDATE_URL:-https://updates.dify.ai}
+  OPENAI_API_BASE: ${OPENAI_API_BASE:-https://api.openai.com/v1}
+  MIGRATION_ENABLED: ${MIGRATION_ENABLED:-true}
+  FILES_ACCESS_TIMEOUT: ${FILES_ACCESS_TIMEOUT:-300}
+  ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+  REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-30}
+  APP_MAX_ACTIVE_REQUESTS: ${APP_MAX_ACTIVE_REQUESTS:-0}
+  APP_MAX_EXECUTION_TIME: ${APP_MAX_EXECUTION_TIME:-1200}
+  DIFY_BIND_ADDRESS: ${DIFY_BIND_ADDRESS:-0.0.0.0}
+  DIFY_PORT: ${DIFY_PORT:-5001}
+  SERVER_WORKER_AMOUNT: ${SERVER_WORKER_AMOUNT:-1}
+  SERVER_WORKER_CLASS: ${SERVER_WORKER_CLASS:-gevent}
+  SERVER_WORKER_CONNECTIONS: ${SERVER_WORKER_CONNECTIONS:-10}
+  CELERY_WORKER_CLASS: ${CELERY_WORKER_CLASS:-}
+  GUNICORN_TIMEOUT: ${GUNICORN_TIMEOUT:-360}
+  CELERY_WORKER_AMOUNT: ${CELERY_WORKER_AMOUNT:-}
+  CELERY_AUTO_SCALE: ${CELERY_AUTO_SCALE:-false}
+  CELERY_MAX_WORKERS: ${CELERY_MAX_WORKERS:-}
+  CELERY_MIN_WORKERS: ${CELERY_MIN_WORKERS:-}
+  API_TOOL_DEFAULT_CONNECT_TIMEOUT: ${API_TOOL_DEFAULT_CONNECT_TIMEOUT:-10}
+  API_TOOL_DEFAULT_READ_TIMEOUT: ${API_TOOL_DEFAULT_READ_TIMEOUT:-60}
+
+  # --- Dify Database Configuration (Pointing to Supabase DB) ---
+  DB_USERNAME: postgres # Use the Supabase superuser or create a dedicated Dify user
+  DB_PASSWORD: ${POSTGRES_PASSWORD} # Use the Supabase DB password
+  DB_HOST: supabase-db # Service name of the Supabase Postgres container
+  DB_PORT: ${POSTGRES_PORT} # Use the Supabase DB port
+  DB_DATABASE: ${DIFY_DB_DATABASE:-dify} # Database name for Dify (needs to be created in Supabase PG)
+  SQLALCHEMY_POOL_SIZE: ${SQLALCHEMY_POOL_SIZE:-30}
+  SQLALCHEMY_POOL_RECYCLE: ${SQLALCHEMY_POOL_RECYCLE:-3600}
+  SQLALCHEMY_ECHO: ${SQLALCHEMY_ECHO:-false}
+
+  # --- Dify Redis Configuration ---
+  REDIS_HOST: ${REDIS_HOST:-redis}
+  REDIS_PORT: ${REDIS_PORT:-6379}
+  REDIS_USERNAME: ${REDIS_USERNAME:-}
+  REDIS_PASSWORD: ${REDIS_PASSWORD:-difyai123456} # Ensure this matches the redis service password
+  REDIS_USE_SSL: ${REDIS_USE_SSL:-false}
+  REDIS_DB: ${REDIS_DB:-0}
+  # Add other REDIS_SENTINEL/CLUSTERS variables if needed
+
+  # --- Dify Celery Broker Configuration (Using Redis) ---
+  CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://:${REDIS_PASSWORD:-difyai123456}@redis:6379/1}
+  BROKER_USE_SSL: ${BROKER_USE_SSL:-false}
+  # Add other CELERY_SENTINEL variables if needed
+
+  # --- Dify CORS Configuration ---
+  WEB_API_CORS_ALLOW_ORIGINS: ${WEB_API_CORS_ALLOW_ORIGINS:-*}
+  CONSOLE_CORS_ALLOW_ORIGINS: ${CONSOLE_CORS_ALLOW_ORIGINS:-*}
+
+  # --- Dify Storage Configuration (Example: Local Filesystem) ---
+  STORAGE_TYPE: ${STORAGE_TYPE:-opendal}
+  OPENDAL_SCHEME: ${OPENDAL_SCHEME:-fs}
+  OPENDAL_FS_ROOT: ${OPENDAL_FS_ROOT:-storage}
+  # Add S3/Azure/Google/etc. variables if using cloud storage
+
+  # --- Dify Vector Store Configuration (Forcing pgvector on Supabase DB) ---
+  VECTOR_STORE: pgvector # Explicitly set to pgvector
+  PGVECTOR_HOST: supabase-db # Service name of the Supabase Postgres container
+  PGVECTOR_PORT: ${POSTGRES_PORT} # Use the Supabase DB port
+  PGVECTOR_USER: postgres # Use the Supabase superuser or create a dedicated Dify user
+  PGVECTOR_PASSWORD: ${POSTGRES_PASSWORD} # Use the Supabase DB password
+  PGVECTOR_DATABASE: ${DIFY_DB_DATABASE:-dify} # Use the same Dify database
+  PGVECTOR_MIN_CONNECTION: ${PGVECTOR_MIN_CONNECTION:-1}
+  PGVECTOR_MAX_CONNECTION: ${PGVECTOR_MAX_CONNECTION:-5}
+  PGVECTOR_PG_BIGM: ${PGVECTOR_PG_BIGM:-false} # pg_bigm might not be in the Supabase image, keep false unless confirmed/installed
+  # PGVECTOR_PG_BIGM_VERSION: ${PGVECTOR_PG_BIGM_VERSION:-1.2-20240606} # Version depends on installation
+
+  # --- Other Dify Configurations ---
+  UPLOAD_FILE_SIZE_LIMIT: ${UPLOAD_FILE_SIZE_LIMIT:-15}
+  UPLOAD_FILE_BATCH_LIMIT: ${UPLOAD_FILE_BATCH_LIMIT:-5}
+  ETL_TYPE: ${ETL_TYPE:-dify} # Set to 'unstructured' if using the unstructured service
+  UNSTRUCTURED_API_URL: ${UNSTRUCTURED_API_URL:-} # Add if ETL_TYPE is 'unstructured'
+  UNSTRUCTURED_API_KEY: ${UNSTRUCTURED_API_KEY:-} # Add if ETL_TYPE is 'unstructured'
+  # ... include all other necessary Dify env vars from the original file ...
+  MAIL_TYPE: ${MAIL_TYPE:-resend}
+  # ... Mail settings ...
+  CODE_EXECUTION_ENDPOINT: ${CODE_EXECUTION_ENDPOINT:-http://sandbox:8194}
+  CODE_EXECUTION_API_KEY: ${CODE_EXECUTION_API_KEY:-dify-sandbox} # Ensure this matches sandbox service API_KEY
+  # ... Code execution limits ...
+  WORKFLOW_MAX_EXECUTION_STEPS: ${WORKFLOW_MAX_EXECUTION_STEPS:-500}
+  # ... Workflow settings ...
+  SSRF_PROXY_HTTP_URL: ${SSRF_PROXY_HTTP_URL:-http://ssrf_proxy:3128}
+  SSRF_PROXY_HTTPS_URL: ${SSRF_PROXY_HTTPS_URL:-http://ssrf_proxy:3128}
+  # ... Loop, Tools, etc. ...
+  PLUGIN_DAEMON_URL: ${PLUGIN_DAEMON_URL:-http://plugin_daemon:5002}
+  # ... Plugin settings ...
+  MARKETPLACE_ENABLED: ${MARKETPLACE_ENABLED:-true}
+  MARKETPLACE_API_URL: ${MARKETPLACE_API_URL:-https://marketplace.dify.ai}
+  # ... etc ...
+
+services:
+
+  # === Supabase Services ===
+
+  studio:
+    container_name: supabase-studio
+    image: supabase/studio:20250317-6955350
+    restart: unless-stopped
+    ports: # Expose Studio UI if needed directly (optional)
+      - "${STUDIO_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://studio:3000/api/platform/profile').then((r) => {if (r.status !== 200) throw new Error(r.status)})"]
+      timeout: 10s
+      interval: 5s
+      retries: 3
+    depends_on:
+      analytics:
+        condition: service_healthy
+      supabase-db: # Depends on the actual DB service
+        condition: service_healthy
+    environment:
+      STUDIO_PG_META_URL: http://meta:8080
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Use the actual DB host service name
+      POSTGRES_HOST: supabase-db
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_DB: ${POSTGRES_DB}
+
+      DEFAULT_ORGANIZATION_NAME: ${STUDIO_DEFAULT_ORGANIZATION:-Default Org}
+      DEFAULT_PROJECT_NAME: ${STUDIO_DEFAULT_PROJECT:-Default Project}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_PUBLIC_URL: ${SUPABASE_PUBLIC_URL:-http://localhost:${KONG_HTTP_PORT:-8000}}
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      AUTH_JWT_SECRET: ${JWT_SECRET}
+
+      LOGFLARE_API_KEY: ${LOGFLARE_API_KEY:-} # Optional
+      LOGFLARE_URL: http://analytics:4000
+      NEXT_PUBLIC_ENABLE_LOGS: true
+      NEXT_ANALYTICS_BACKEND_PROVIDER: postgres
+
+  kong:
+    container_name: supabase-kong
+    image: kong:2.8.1
+    restart: unless-stopped
+    ports:
+      - "${KONG_HTTP_PORT:-8000}:8000/tcp"
+      - "${KONG_HTTPS_PORT:-8443}:8443/tcp"
+    volumes:
+      - ./volumes/api/kong.yml:/home/kong/temp.yml:ro,z
+    depends_on:
+      analytics:
+        condition: service_healthy
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
+      KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      DASHBOARD_USERNAME: ${DASHBOARD_USERNAME:-supabase}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-supabase}
+    entrypoint: bash -c 'eval "echo \"$$(cat ~/temp.yml)\"" > ~/kong.yml && /docker-entrypoint.sh kong docker-start'
+
+  auth:
+    container_name: supabase-auth
+    image: supabase/gotrue:v2.170.0
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9999/health"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+      analytics:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: ${API_EXTERNAL_URL:-http://localhost:${KONG_HTTP_PORT:-8000}}
+
+      GOTRUE_DB_DRIVER: postgres
+      # Point to the actual DB service name
+      GOTRUE_DB_DATABASE_URL: postgresql://supabase_auth_admin:${POSTGRES_PASSWORD}@supabase-db:${POSTGRES_PORT}/${POSTGRES_DB}
+
+      GOTRUE_SITE_URL: ${SITE_URL:-http://localhost:3000} # Adjust if your frontend is elsewhere
+      GOTRUE_URI_ALLOW_LIST: ${ADDITIONAL_REDIRECT_URLS:-}
+      GOTRUE_DISABLE_SIGNUP: ${DISABLE_SIGNUP:-false}
+
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: ${JWT_EXPIRY:-3600}
+      GOTRUE_JWT_SECRET: ${JWT_SECRET}
+
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: ${ENABLE_EMAIL_SIGNUP:-true}
+      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: ${ENABLE_ANONYMOUS_USERS:-false}
+      GOTRUE_MAILER_AUTOCONFIRM: ${ENABLE_EMAIL_AUTOCONFIRM:-false}
+
+      # SMTP Settings (configure if using email features)
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL:-}
+      GOTRUE_SMTP_HOST: ${SMTP_HOST:-}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:-587}
+      GOTRUE_SMTP_USER: ${SMTP_USER:-}
+      GOTRUE_SMTP_PASS: ${SMTP_PASS:-}
+      GOTRUE_SMTP_SENDER_NAME: ${SMTP_SENDER_NAME:-}
+      # ... other GOTRUE settings ...
+
+  rest:
+    container_name: supabase-rest
+    image: postgrest/postgrest:v12.2.8
+    restart: unless-stopped
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+      analytics:
+        condition: service_healthy
+    environment:
+      # Point to the actual DB service name
+      PGRST_DB_URI: postgresql://authenticator:${POSTGRES_PASSWORD}@supabase-db:${POSTGRES_PORT}/${POSTGRES_DB}
+      PGRST_DB_SCHEMAS: ${PGRST_DB_SCHEMAS:-public, storage, graphql_public}
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_APP_SETTINGS_JWT_SECRET: ${JWT_SECRET}
+      PGRST_APP_SETTINGS_JWT_EXP: ${JWT_EXPIRY:-3600}
+    command: ["postgrest"]
+
+  realtime:
+    container_name: realtime-dev.supabase-realtime
+    image: supabase/realtime:v2.34.43
+    restart: unless-stopped
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+      analytics:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "-H", "Authorization: Bearer ${ANON_KEY}", "http://localhost:4000/api/tenants/realtime-dev/health"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    environment:
+      PORT: 4000
+      # Point to the actual DB service name
+      DB_HOST: supabase-db
+      DB_PORT: ${POSTGRES_PORT}
+      DB_USER: supabase_admin
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB}
+      DB_AFTER_CONNECT_QUERY: 'SET search_path TO _realtime'
+      DB_ENC_KEY: ${REALTIME_DB_ENC_KEY:-supabaserealtime} # Use a secure key
+      API_JWT_SECRET: ${JWT_SECRET}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:-} # Generate a strong random key
+      ERL_AFLAGS: -proto_dist inet_tcp
+      DNS_NODES: "''"
+      RLIMIT_NOFILE: "10000"
+      APP_NAME: realtime
+      SEED_SELF_HOST: true
+      RUN_JANITOR: true
+
+  storage:
+    container_name: supabase-storage
+    image: supabase/storage-api:v1.19.3
+    restart: unless-stopped
+    volumes:
+      - ./volumes/storage:/var/lib/storage:z
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://storage:5000/status"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+      rest:
+        condition: service_started
+      imgproxy:
+        condition: service_started
+    environment:
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      POSTGREST_URL: http://rest:3000
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      # Point to the actual DB service name
+      DATABASE_URL: postgresql://supabase_storage_admin:${POSTGRES_PASSWORD}@supabase-db:${POSTGRES_PORT}/${POSTGRES_DB}
+      FILE_SIZE_LIMIT: ${STORAGE_FILE_SIZE_LIMIT:-52428800}
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: stub
+      REGION: stub
+      GLOBAL_S3_BUCKET: stub
+      ENABLE_IMAGE_TRANSFORMATION: "true"
+      IMGPROXY_URL: http://imgproxy:5001
+
+  imgproxy:
+    container_name: supabase-imgproxy
+    image: darthsim/imgproxy:v3.8.0
+    restart: unless-stopped
+    volumes:
+      - ./volumes/storage:/var/lib/storage:z
+    healthcheck:
+      test: ["CMD", "imgproxy", "health"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    environment:
+      IMGPROXY_BIND: ":5001"
+      IMGPROXY_LOCAL_FILESYSTEM_ROOT: /
+      IMGPROXY_USE_ETAG: "true"
+      IMGPROXY_ENABLE_WEBP_DETECTION: ${IMGPROXY_ENABLE_WEBP_DETECTION:-true}
+
+  meta:
+    container_name: supabase-meta
+    image: supabase/postgres-meta:v0.87.1
+    restart: unless-stopped
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+      analytics:
+        condition: service_healthy
+    environment:
+      PG_META_PORT: 8080
+      # Point to the actual DB service name
+      PG_META_DB_HOST: supabase-db
+      PG_META_DB_PORT: ${POSTGRES_PORT}
+      PG_META_DB_NAME: ${POSTGRES_DB}
+      PG_META_DB_USER: supabase_admin
+      PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD}
+
+  functions:
+    container_name: supabase-edge-functions
+    image: supabase/edge-runtime:v1.67.4
+    restart: unless-stopped
+    volumes:
+      - ./volumes/functions:/home/deno/functions:Z
+    depends_on:
+      analytics:
+        condition: service_healthy
+    environment:
+      JWT_SECRET: ${JWT_SECRET}
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      # Point to the actual DB service name
+      SUPABASE_DB_URL: postgresql://postgres:${POSTGRES_PASSWORD}@supabase-db:${POSTGRES_PORT}/${POSTGRES_DB}
+      VERIFY_JWT: "${FUNCTIONS_VERIFY_JWT:-true}"
+    command: ["start", "--main-service", "/home/deno/functions/main"]
+
+  analytics:
+    container_name: supabase-analytics
+    image: supabase/logflare:1.12.0
+    restart: unless-stopped
+    ports:
+      - 4000:4000 # Expose if needed directly
+    healthcheck:
+      test: ["CMD", "curl", "http://localhost:4000/health"]
+      timeout: 5s
+      interval: 5s
+      retries: 10
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+    environment:
+      LOGFLARE_NODE_HOST: 127.0.0.1
+      DB_USERNAME: supabase_admin
+      DB_DATABASE: _supabase # Internal DB for analytics
+      # Point to the actual DB service name
+      DB_HOSTNAME: supabase-db
+      DB_PORT: ${POSTGRES_PORT}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_SCHEMA: _analytics
+      LOGFLARE_API_KEY: ${LOGFLARE_API_KEY:-} # Optional
+      LOGFLARE_SINGLE_TENANT: true
+      LOGFLARE_SUPABASE_MODE: true
+      LOGFLARE_MIN_CLUSTER_SIZE: 1
+      # Point to the actual DB service name
+      POSTGRES_BACKEND_URL: postgresql://supabase_admin:${POSTGRES_PASSWORD}@supabase-db:${POSTGRES_PORT}/_supabase
+      POSTGRES_BACKEND_SCHEMA: _analytics
+      LOGFLARE_FEATURE_FLAG_OVERRIDE: multibackend=true
+
+  # === The Shared PostgreSQL Database (from Supabase) ===
+  # This instance includes the pgvector extension needed by Dify.
+  supabase-db:
+    container_name: supabase-db
+    image: supabase/postgres:15.8.1.060 # Includes pgvector
+    restart: unless-stopped
+    volumes:
+      # Supabase specific init scripts
+      - ./volumes/db/realtime.sql:/docker-entrypoint-initdb.d/migrations/99-realtime.sql:Z
+      - ./volumes/db/webhooks.sql:/docker-entrypoint-initdb.d/init-scripts/98-webhooks.sql:Z
+      - ./volumes/db/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:Z
+      - ./volumes/db/jwt.sql:/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql:Z
+      - ./volumes/db/_supabase.sql:/docker-entrypoint-initdb.d/migrations/97-_supabase.sql:Z
+      - ./volumes/db/logs.sql:/docker-entrypoint-initdb.d/migrations/99-logs.sql:Z
+      - ./volumes/db/pooler.sql:/docker-entrypoint-initdb.d/migrations/99-pooler.sql:Z
+      # Optional: Add an init script to create the Dify database and user if needed
+      # - ./volumes/db/init-dify.sql:/docker-entrypoint-initdb.d/init-scripts/100-dify.sql:Z
+      # Persisted data
+      - supabase-db-data:/var/lib/postgresql/data:Z
+      # Persisted config (for pgsodium key)
+      - db-config:/etc/postgresql-custom
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    depends_on:
+      vector: # Depends on the log shipper
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: /var/run/postgresql # Internal socket path
+      PGPORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXP: ${JWT_EXPIRY:-3600}
+      # Ensure Dify database exists (can be done manually or via init script)
+      # DIFY_DB_DATABASE: ${DIFY_DB_DATABASE:-dify} # Reference only, creation needed
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "log_min_messages=fatal"]
+
+  # Supabase Log Shipper (NOT the vector database itself)
+  vector:
+    container_name: supabase-vector
+    image: timberio/vector:0.28.1-alpine
+    restart: unless-stopped
+    volumes:
+      - ./volumes/logs/vector.yml:/etc/vector/vector.yml:ro,z
+      - ${DOCKER_SOCKET_LOCATION:-/var/run/docker.sock}:/var/run/docker.sock:ro,z
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://vector:9001/health"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    environment:
+      LOGFLARE_API_KEY: ${LOGFLARE_API_KEY:-} # Optional
+    command: ["--config", "/etc/vector/vector.yml"]
+    security_opt:
+      - "label=disable"
+
+  # Supabase Connection Pooler
+  supavisor:
+    container_name: supabase-pooler
+    image: supabase/supavisor:2.4.14
+    restart: unless-stopped
+    ports:
+      # Expose pooler on a different port if Supabase DB is also exposed on 5432
+      - "${POOLER_PORT:-6543}:${POSTGRES_PORT:-5432}" # Map internal PG port to external pooler port
+      - "${POOLER_PROXY_PORT_TRANSACTION:-6544}:6543" # Transaction pool port
+    volumes:
+      - ./volumes/pooler/pooler.exs:/etc/pooler/pooler.exs:ro,z
+    healthcheck:
+      test: ["CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "http://127.0.0.1:4000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+      analytics:
+        condition: service_healthy
+    environment:
+      PORT: 4000
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Point to the actual DB service name for internal Ecto connection
+      DATABASE_URL: ecto://supabase_admin:${POSTGRES_PASSWORD}@supabase-db:${POSTGRES_PORT}/_supabase
+      CLUSTER_POSTGRES: true
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:-} # Generate a strong random key
+      VAULT_ENC_KEY: ${VAULT_ENC_KEY:-} # Generate a strong random key
+      API_JWT_SECRET: ${JWT_SECRET}
+      METRICS_JWT_SECRET: ${JWT_SECRET}
+      REGION: local
+      ERL_AFLAGS: -proto_dist inet_tcp
+      POOLER_TENANT_ID: ${POOLER_TENANT_ID:-local}
+      POOLER_DEFAULT_POOL_SIZE: ${POOLER_DEFAULT_POOL_SIZE:-15}
+      POOLER_MAX_CLIENT_CONN: ${POOLER_MAX_CLIENT_CONN:-200}
+      POOLER_POOL_MODE: transaction
+    command: ["/bin/sh", "-c", "/app/bin/migrate && /app/bin/supavisor eval \"$$(cat /etc/pooler/pooler.exs)\" && /app/bin/server"]
+
+
+  # === Dify Services ===
+
+  api:
+    image: langgenius/dify-api:1.1.3
+    container_name: dify-api
+    restart: always
+    environment:
+      <<: *shared-api-worker-env
+      MODE: api
+      SENTRY_DSN: ${API_SENTRY_DSN:-}
+      SENTRY_TRACES_SAMPLE_RATE: ${API_SENTRY_TRACES_SAMPLE_RATE:-1.0}
+      SENTRY_PROFILES_SAMPLE_RATE: ${API_SENTRY_PROFILES_SAMPLE_RATE:-1.0}
+      PLUGIN_REMOTE_INSTALL_HOST: ${EXPOSE_PLUGIN_DEBUGGING_HOST:-localhost}
+      PLUGIN_REMOTE_INSTALL_PORT: ${EXPOSE_PLUGIN_DEBUGGING_PORT:-5003}
+      PLUGIN_MAX_PACKAGE_SIZE: ${PLUGIN_MAX_PACKAGE_SIZE:-52428800}
+      INNER_API_KEY_FOR_PLUGIN: ${PLUGIN_DIFY_INNER_API_KEY:-QaHbTe77CtuXmsfyhR7+vRjI/+XbV1AaFy691iy+kGDv2Jvy0/eAh8Y1} # Use a strong key
+    depends_on:
+      redis:
+        condition: service_healthy
+      supabase-db: # Depends on the shared database
+        condition: service_healthy
+    volumes:
+      - dify-storage:/app/api/storage # Use named volume for storage
+    networks:
+      - ssrf_proxy_network
+      - default
+
+  worker:
+    image: langgenius/dify-api:1.1.3
+    container_name: dify-worker
+    restart: always
+    environment:
+      <<: *shared-api-worker-env
+      MODE: worker
+      SENTRY_DSN: ${API_SENTRY_DSN:-}
+      SENTRY_TRACES_SAMPLE_RATE: ${API_SENTRY_TRACES_SAMPLE_RATE:-1.0}
+      SENTRY_PROFILES_SAMPLE_RATE: ${API_SENTRY_PROFILES_SAMPLE_RATE:-1.0}
+      PLUGIN_MAX_PACKAGE_SIZE: ${PLUGIN_MAX_PACKAGE_SIZE:-52428800}
+      INNER_API_KEY_FOR_PLUGIN: ${PLUGIN_DIFY_INNER_API_KEY:-QaHbTe77CtuXmsfyhR7+vRjI/+XbV1AaFy691iy+kGDv2Jvy0/eAh8Y1} # Use the same strong key as api
+    depends_on:
+      redis:
+        condition: service_healthy
+      supabase-db: # Depends on the shared database
+        condition: service_healthy
+    volumes:
+      - dify-storage:/app/api/storage # Use named volume for storage
+    networks:
+      - ssrf_proxy_network
+      - default
+
+  web:
+    image: langgenius/dify-web:1.1.3
+    container_name: dify-web
+    restart: always
+    environment:
+      CONSOLE_API_URL: ${CONSOLE_API_URL:-} # Should point to where API is exposed (e.g., via Nginx)
+      APP_API_URL: ${APP_API_URL:-} # Should point to where API is exposed (e.g., via Nginx)
+      SENTRY_DSN: ${WEB_SENTRY_DSN:-}
+      NEXT_TELEMETRY_DISABLED: ${NEXT_TELEMETRY_DISABLED:-1} # Disable telemetry
+      TEXT_GENERATION_TIMEOUT_MS: ${TEXT_GENERATION_TIMEOUT_MS:-60000}
+      CSP_WHITELIST: ${CSP_WHITELIST:-}
+      MARKETPLACE_API_URL: ${MARKETPLACE_API_URL:-https://marketplace.dify.ai}
+      MARKETPLACE_URL: ${MARKETPLACE_URL:-https://marketplace.dify.ai}
+      TOP_K_MAX_VALUE: ${TOP_K_MAX_VALUE:-10}
+      INDEXING_MAX_SEGMENTATION_TOKENS_LENGTH: ${INDEXING_MAX_SEGMENTATION_TOKENS_LENGTH:-4000}
+      PM2_INSTANCES: ${PM2_INSTANCES:-2}
+      LOOP_NODE_MAX_COUNT: ${LOOP_NODE_MAX_COUNT:-100}
+      MAX_TOOLS_NUM: ${MAX_TOOLS_NUM:-10}
+      MAX_PARALLEL_LIMIT: ${MAX_PARALLEL_LIMIT:-10}
+      MAX_ITERATIONS_NUM: ${MAX_ITERATIONS_NUM:-5}
+    # No direct dependency on DB, relies on API service
+
+  redis:
+    image: redis:6-alpine
+    container_name: dify-redis
+    restart: always
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:-difyai123456} # Use a strong password
+    volumes:
+      - dify-redis-data:/data # Use named volume for redis data
+    command: redis-server --requirepass ${REDIS_PASSWORD:-difyai123456} # Use the same password
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-difyai123456}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  sandbox:
+    image: langgenius/dify-sandbox:0.2.11
+    container_name: dify-sandbox
+    restart: always
+    environment:
+      API_KEY: ${SANDBOX_API_KEY:-dify-sandbox} # Use a strong key, must match CODE_EXECUTION_API_KEY
+      GIN_MODE: ${SANDBOX_GIN_MODE:-release}
+      WORKER_TIMEOUT: ${SANDBOX_WORKER_TIMEOUT:-15}
+      ENABLE_NETWORK: ${SANDBOX_ENABLE_NETWORK:-true} # Network needed to talk to ssrf_proxy
+      HTTP_PROXY: ${SANDBOX_HTTP_PROXY:-http://ssrf_proxy:3128}
+      HTTPS_PROXY: ${SANDBOX_HTTPS_PROXY:-http://ssrf_proxy:3128}
+      SANDBOX_PORT: ${SANDBOX_PORT:-8194}
+    volumes:
+      - dify-sandbox-deps:/dependencies # Use named volume
+      - ./volumes/sandbox/conf:/conf # Keep local conf if needed
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8194/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - ssrf_proxy_network # Only needs ssrf_proxy network
+
+  plugin_daemon:
+    image: langgenius/dify-plugin-daemon:0.0.6-local
+    container_name: dify-plugin-daemon
+    restart: always
+    environment:
+      # Inherit DB, Redis etc. from shared env, but override DB name
+      <<: *shared-api-worker-env
+      DB_DATABASE: ${DB_PLUGIN_DATABASE:-dify_plugin} # Separate DB for plugins within the same PG instance
+      SERVER_PORT: ${PLUGIN_DAEMON_PORT:-5002}
+      SERVER_KEY: ${PLUGIN_DAEMON_KEY:-lYkiYYT6owG+71oLerGzA7GXCgOT++6ovaezWAjpCjf+Sjc3ZtU+qUEi} # Use a strong key
+      MAX_PLUGIN_PACKAGE_SIZE: ${PLUGIN_MAX_PACKAGE_SIZE:-52428800}
+      PPROF_ENABLED: ${PLUGIN_PPROF_ENABLED:-false}
+      DIFY_INNER_API_URL: ${PLUGIN_DIFY_INNER_API_URL:-http://api:5001} # Internal communication
+      DIFY_INNER_API_KEY: ${PLUGIN_DIFY_INNER_API_KEY:-QaHbTe77CtuXmsfyhR7+vRjI/+XbV1AaFy691iy+kGDv2Jvy0/eAh8Y1} # Use the same strong key as api/worker
+      PLUGIN_REMOTE_INSTALLING_HOST: ${PLUGIN_DEBUGGING_HOST:-0.0.0.0}
+      PLUGIN_REMOTE_INSTALLING_PORT: ${PLUGIN_DEBUGGING_PORT:-5003}
+      PLUGIN_WORKING_PATH: ${PLUGIN_WORKING_PATH:-/app/storage/cwd}
+      FORCE_VERIFYING_SIGNATURE: ${FORCE_VERIFYING_SIGNATURE:-true}
+      PYTHON_ENV_INIT_TIMEOUT: ${PLUGIN_PYTHON_ENV_INIT_TIMEOUT:-120}
+      PLUGIN_MAX_EXECUTION_TIMEOUT: ${PLUGIN_MAX_EXECUTION_TIMEOUT:-600}
+      PIP_MIRROR_URL: ${PIP_MIRROR_URL:-}
+      DB_SSL_MODE: ${DB_SSL_MODE:-}
+    ports:
+      # Expose debugging port if needed
+      - "${EXPOSE_PLUGIN_DEBUGGING_PORT:-5003}:${PLUGIN_DEBUGGING_PORT:-5003}"
+    volumes:
+      - dify-plugin-storage:/app/storage # Use named volume
+    depends_on: # Needs DB access
+        supabase-db:
+            condition: service_healthy
+    networks:
+      - ssrf_proxy_network
+      - default
+
+  ssrf_proxy:
+    image: ubuntu/squid:latest
+    container_name: dify-ssrf-proxy
+    restart: always
+    volumes:
+      - ./ssrf_proxy/squid.conf.template:/etc/squid/squid.conf.template:ro
+      - ./ssrf_proxy/docker-entrypoint.sh:/docker-entrypoint-mount.sh:ro
+    entrypoint: ["sh", "-c", "cp /docker-entrypoint-mount.sh /docker-entrypoint.sh && sed -i 's/\r$$//' /docker-entrypoint.sh && chmod +x /docker-entrypoint.sh && /docker-entrypoint.sh"]
+    environment:
+      HTTP_PORT: ${SSRF_HTTP_PORT:-3128}
+      COREDUMP_DIR: ${SSRF_COREDUMP_DIR:-/var/spool/squid}
+      REVERSE_PROXY_PORT: ${SSRF_REVERSE_PROXY_PORT:-8194} # Should match sandbox port
+      SANDBOX_HOST: ${SSRF_SANDBOX_HOST:-sandbox} # Service name of the sandbox container
+      SANDBOX_PORT: ${SANDBOX_PORT:-8194} # Port inside the sandbox container
+    networks:
+      - ssrf_proxy_network # Only needs ssrf_proxy network
+
+  # Optional: Nginx Reverse Proxy for Dify (if not using Supabase Kong for everything)
+  # If using this, configure Dify WEB's *_API_URL env vars accordingly
+  nginx:
+    image: nginx:latest
+    container_name: dify-nginx
+    restart: always
+    volumes:
+      - ./nginx/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
+      - ./nginx/proxy.conf.template:/etc/nginx/proxy.conf.template:ro
+      - ./nginx/https.conf.template:/etc/nginx/https.conf.template:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/docker-entrypoint.sh:/docker-entrypoint-mount.sh:ro
+      - ./nginx/ssl:/etc/ssl:ro # cert dir (legacy)
+      - ./volumes/certbot/conf/live:/etc/letsencrypt/live:ro # cert dir (with certbot container)
+      - ./volumes/certbot/conf:/etc/letsencrypt:ro
+      - ./volumes/certbot/www:/var/www/html:ro
+    entrypoint: ["sh", "-c", "cp /docker-entrypoint-mount.sh /docker-entrypoint.sh && sed -i 's/\r$$//' /docker-entrypoint.sh && chmod +x /docker-entrypoint.sh && /docker-entrypoint.sh"]
+    environment:
+      NGINX_SERVER_NAME: ${NGINX_SERVER_NAME:-localhost} # Your domain
+      NGINX_HTTPS_ENABLED: ${NGINX_HTTPS_ENABLED:-false}
+      NGINX_SSL_PORT: ${NGINX_SSL_PORT:-443}
+      NGINX_PORT: ${NGINX_PORT:-80}
+      NGINX_SSL_CERT_FILENAME: ${NGINX_SSL_CERT_FILENAME:-dify.crt}
+      NGINX_SSL_CERT_KEY_FILENAME: ${NGINX_SSL_CERT_KEY_FILENAME:-dify.key}
+      NGINX_SSL_PROTOCOLS: ${NGINX_SSL_PROTOCOLS:-TLSv1.2 TLSv1.3} # Modern protocols
+      NGINX_WORKER_PROCESSES: ${NGINX_WORKER_PROCESSES:-auto}
+      NGINX_CLIENT_MAX_BODY_SIZE: ${NGINX_CLIENT_MAX_BODY_SIZE:-15M}
+      NGINX_KEEPALIVE_TIMEOUT: ${NGINX_KEEPALIVE_TIMEOUT:-65}
+      NGINX_PROXY_READ_TIMEOUT: ${NGINX_PROXY_READ_TIMEOUT:-3600s}
+      NGINX_PROXY_SEND_TIMEOUT: ${NGINX_PROXY_SEND_TIMEOUT:-3600s}
+      NGINX_ENABLE_CERTBOT_CHALLENGE: ${NGINX_ENABLE_CERTBOT_CHALLENGE:-false}
+      CERTBOT_DOMAIN: ${CERTBOT_DOMAIN:-} # Your domain for certbot
+      # Nginx needs to point to the correct upstream services (dify-api, dify-web)
+      # These are typically set within the nginx.conf.template
+      DIFY_API_HOST: api # Service name of Dify API
+      DIFY_API_PORT: ${DIFY_PORT:-5001} # Internal port of Dify API
+      DIFY_WEB_HOST: web # Service name of Dify Web
+      DIFY_WEB_PORT: 3000 # Internal port of Dify Web
+    depends_on:
+      - api
+      - web
+    ports:
+      - '${EXPOSE_NGINX_PORT:-80}:${NGINX_PORT:-80}'
+      - '${EXPOSE_NGINX_SSL_PORT:-443}:${NGINX_SSL_PORT:-443}'
+
+  # Optional: Certbot for Let's Encrypt (use with Nginx)
+  certbot:
+    image: certbot/certbot
+    container_name: dify-certbot
+    profiles:
+      - certbot # Only run when profile is activated: docker compose --profile certbot up
+    volumes:
+      - ./volumes/certbot/conf:/etc/letsencrypt
+      - ./volumes/certbot/www:/var/www/html
+      - ./volumes/certbot/logs:/var/log/letsencrypt
+      - ./certbot/update-cert.template.txt:/update-cert.template.txt:ro
+      - ./certbot/docker-entrypoint.sh:/docker-entrypoint.sh:ro
+    environment:
+      CERTBOT_EMAIL: ${CERTBOT_EMAIL:-} # Your email
+      CERTBOT_DOMAIN: ${CERTBOT_DOMAIN:-} # Your domain
+      CERTBOT_OPTIONS: ${CERTBOT_OPTIONS:-}
+    entrypoint: ['/docker-entrypoint.sh']
+    command: ['tail', '-f', '/dev/null'] # Keep running
+
+# === Networks ===
+networks:
+  # Default network allows communication between most services
+  default:
+    driver: bridge
+  # Isolated network for sandbox, ssrf_proxy, and services that need it (api, worker, plugin_daemon)
+  ssrf_proxy_network:
+    driver: bridge
+    internal: true # Prevent external access to this network
+
+# === Volumes ===
+volumes:
+  # Supabase Volumes
+  db-config:
+  supabase-db-data: # Renamed for clarity
+  # Dify Volumes (using named volumes is generally preferred)
+  dify-storage:
+  dify-redis-data:
+  dify-sandbox-deps:
+  dify-plugin-storage:
+  # Certbot Volumes (if using)
+  certbot-conf:
+    driver: local
+    name: certbot_conf # Explicit name
+  certbot-www:
+    driver: local
+    name: certbot_www # Explicit name
+  certbot-logs:
+    driver: local
+    name: certbot_logs # Explicit name
