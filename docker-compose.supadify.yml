@@ -427,9 +427,9 @@ services:
       # Optional: Add an init script to create the Dify database and user if needed
       # - ./volumes/db/init-dify.sql:/docker-entrypoint-initdb.d/init-scripts/100-dify.sql:Z
       # Persisted data
-      - supabase-db-data:/var/lib/postgresql/data:Z
+      - ./volumes/postgresql/data:/var/lib/postgresql/data:z
       # Persisted config (for pgsodium key)
-      - db-config:/etc/postgresql-custom
+      - ./volumes/pgsodium:/etc/postgresql-custom
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
       interval: 5s
@@ -535,7 +535,7 @@ services:
       supabase-db: # Depends on the shared database
         condition: service_healthy
     volumes:
-      - dify-storage:/app/api/storage # Use named volume for storage
+      - ./volumes/dify/storage:/app/api/storage 
     networks:
       - ssrf_proxy_network
       - default
@@ -558,7 +558,7 @@ services:
       supabase-db: # Depends on the shared database
         condition: service_healthy
     volumes:
-      - dify-storage:/app/api/storage # Use named volume for storage
+      - ./volumes/dify/storage:/app/api/storage:z
     networks:
       - ssrf_proxy_network
       - default
@@ -592,7 +592,7 @@ services:
     environment:
       REDISCLI_AUTH: ${REDIS_PASSWORD:-difyai123456} # Use a strong password
     volumes:
-      - dify-redis-data:/data # Use named volume for redis data
+      - ./volumes/redis/data:/data
     command: redis-server --requirepass ${REDIS_PASSWORD:-difyai123456} # Use the same password
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-difyai123456}", "ping"]
@@ -613,7 +613,7 @@ services:
       HTTPS_PROXY: ${SANDBOX_HTTPS_PROXY:-http://ssrf_proxy:3128}
       SANDBOX_PORT: ${SANDBOX_PORT:-8194}
     volumes:
-      - dify-sandbox-deps:/dependencies # Use named volume
+      - ./volumes/sandbox/dependencies:/dependencies
       - ./volumes/sandbox/conf:/conf # Keep local conf if needed
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8194/health"]
@@ -649,7 +649,7 @@ services:
       # Expose debugging port if needed
       - "${EXPOSE_PLUGIN_DEBUGGING_PORT:-5003}:${PLUGIN_DEBUGGING_PORT:-5003}"
     volumes:
-      - dify-plugin-storage:/app/storage # Use named volume
+      - ./volumes/plugin_daemon:/app/storage
     depends_on: # Needs DB access
         supabase-db:
             condition: service_healthy
@@ -674,69 +674,23 @@ services:
     networks:
       - ssrf_proxy_network # Only needs ssrf_proxy network
 
-  # Optional: Nginx Reverse Proxy for Dify (if not using Supabase Kong for everything)
+  # Optional: Caddy for reverse proxy (if not using Supabase Kong for everything)
   # If using this, configure Dify WEB's *_API_URL env vars accordingly
-  nginx:
-    image: nginx:latest
-    container_name: dify-nginx
-    restart: always
-    volumes:
-      - ./nginx/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
-      - ./nginx/proxy.conf.template:/etc/nginx/proxy.conf.template:ro
-      - ./nginx/https.conf.template:/etc/nginx/https.conf.template:ro
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - ./nginx/docker-entrypoint.sh:/docker-entrypoint-mount.sh:ro
-      - ./nginx/ssl:/etc/ssl:ro # cert dir (legacy)
-      - ./volumes/certbot/conf/live:/etc/letsencrypt/live:ro # cert dir (with certbot container)
-      - ./volumes/certbot/conf:/etc/letsencrypt:ro
-      - ./volumes/certbot/www:/var/www/html:ro
-    entrypoint: ["sh", "-c", "cp /docker-entrypoint-mount.sh /docker-entrypoint.sh && sed -i 's/\r$$//' /docker-entrypoint.sh && chmod +x /docker-entrypoint.sh && /docker-entrypoint.sh"]
-    environment:
-      NGINX_SERVER_NAME: ${NGINX_SERVER_NAME:-localhost} # Your domain
-      NGINX_HTTPS_ENABLED: ${NGINX_HTTPS_ENABLED:-false}
-      NGINX_SSL_PORT: ${NGINX_SSL_PORT:-443}
-      NGINX_PORT: ${NGINX_PORT:-80}
-      NGINX_SSL_CERT_FILENAME: ${NGINX_SSL_CERT_FILENAME:-dify.crt}
-      NGINX_SSL_CERT_KEY_FILENAME: ${NGINX_SSL_CERT_KEY_FILENAME:-dify.key}
-      NGINX_SSL_PROTOCOLS: ${NGINX_SSL_PROTOCOLS:-TLSv1.2 TLSv1.3} # Modern protocols
-      NGINX_WORKER_PROCESSES: ${NGINX_WORKER_PROCESSES:-auto}
-      NGINX_CLIENT_MAX_BODY_SIZE: ${NGINX_CLIENT_MAX_BODY_SIZE:-15M}
-      NGINX_KEEPALIVE_TIMEOUT: ${NGINX_KEEPALIVE_TIMEOUT:-65}
-      NGINX_PROXY_READ_TIMEOUT: ${NGINX_PROXY_READ_TIMEOUT:-3600s}
-      NGINX_PROXY_SEND_TIMEOUT: ${NGINX_PROXY_SEND_TIMEOUT:-3600s}
-      NGINX_ENABLE_CERTBOT_CHALLENGE: ${NGINX_ENABLE_CERTBOT_CHALLENGE:-false}
-      CERTBOT_DOMAIN: ${CERTBOT_DOMAIN:-} # Your domain for certbot
-      # Nginx needs to point to the correct upstream services (dify-api, dify-web)
-      # These are typically set within the nginx.conf.template
-      DIFY_API_HOST: api # Service name of Dify API
-      DIFY_API_PORT: ${DIFY_PORT:-5001} # Internal port of Dify API
-      DIFY_WEB_HOST: web # Service name of Dify Web
-      DIFY_WEB_PORT: 3000 # Internal port of Dify Web
-    depends_on:
-      - api
-      - web
+  caddy:
+    image: caddy:latest
+    hostname: caddy
+    container_name: caddy
+    networks: ['demo']
+    restart: unless-stopped
+    env_file:
+      - .env
     ports:
-      - '${EXPOSE_NGINX_PORT:-80}:${NGINX_PORT:-80}'
-      - '${EXPOSE_NGINX_SSL_PORT:-443}:${NGINX_SSL_PORT:-443}'
-
-  # Optional: Certbot for Let's Encrypt (use with Nginx)
-  certbot:
-    image: certbot/certbot
-    container_name: dify-certbot
-    profiles:
-      - certbot # Only run when profile is activated: docker compose --profile certbot up
+      - 80:80
+      - 443:443
     volumes:
-      - ./volumes/certbot/conf:/etc/letsencrypt
-      - ./volumes/certbot/www:/var/www/html
-      - ./volumes/certbot/logs:/var/log/letsencrypt
-      - ./certbot/update-cert.template.txt:/update-cert.template.txt:ro
-      - ./certbot/docker-entrypoint.sh:/docker-entrypoint.sh:ro
-    environment:
-      CERTBOT_EMAIL: ${CERTBOT_EMAIL:-} # Your email
-      CERTBOT_DOMAIN: ${CERTBOT_DOMAIN:-} # Your domain
-      CERTBOT_OPTIONS: ${CERTBOT_OPTIONS:-}
-    entrypoint: ['/docker-entrypoint.sh']
-    command: ['tail', '-f', '/dev/null'] # Keep running
+      - ./volumes/caddy/data:/data
+      - ./volumes/caddy/config:/config
+      - ./Caddyfile:/etc/caddy/Caddyfile
 
 # === Networks ===
 networks:
@@ -750,14 +704,6 @@ networks:
 
 # === Volumes ===
 volumes:
-  # Supabase Volumes
-  db-config:
-  supabase-db-data: # Renamed for clarity
-  # Dify Volumes (using named volumes is generally preferred)
-  dify-storage:
-  dify-redis-data:
-  dify-sandbox-deps:
-  dify-plugin-storage:
   # Certbot Volumes (if using)
   certbot-conf:
     driver: local
