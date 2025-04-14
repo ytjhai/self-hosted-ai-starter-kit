@@ -189,6 +189,8 @@ services:
       DASHBOARD_USERNAME: ${DASHBOARD_USERNAME:-supabase}
       DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-supabase}
     entrypoint: bash -c 'eval "echo \"$$(cat ~/temp.yml)\"" > ~/kong.yml && /docker-entrypoint.sh kong docker-start'
+    networks:
+      - default
 
   auth:
     container_name: supabase-auth
@@ -235,6 +237,9 @@ services:
       GOTRUE_SMTP_PASS: ${SMTP_PASS:-}
       GOTRUE_SMTP_SENDER_NAME: ${SMTP_SENDER_NAME:-}
       # ... other GOTRUE settings ...
+    networks:
+      - default
+      - backend
 
   rest:
     container_name: supabase-rest
@@ -255,6 +260,9 @@ services:
       PGRST_APP_SETTINGS_JWT_SECRET: ${JWT_SECRET}
       PGRST_APP_SETTINGS_JWT_EXP: ${JWT_EXPIRY:-3600}
     command: ["postgrest"]
+    networks:
+      - default
+      - backend
 
   realtime:
     container_name: realtime-dev.supabase-realtime
@@ -288,6 +296,9 @@ services:
       APP_NAME: realtime
       SEED_SELF_HOST: true
       RUN_JANITOR: true
+    networks:
+      - default
+      - backend
 
   storage:
     container_name: supabase-storage
@@ -322,6 +333,9 @@ services:
       GLOBAL_S3_BUCKET: stub
       ENABLE_IMAGE_TRANSFORMATION: "true"
       IMGPROXY_URL: http://imgproxy:5001
+    networks:
+      - default
+      - backend
 
   imgproxy:
     container_name: supabase-imgproxy
@@ -339,6 +353,8 @@ services:
       IMGPROXY_LOCAL_FILESYSTEM_ROOT: /
       IMGPROXY_USE_ETAG: "true"
       IMGPROXY_ENABLE_WEBP_DETECTION: ${IMGPROXY_ENABLE_WEBP_DETECTION:-true}
+    networks:
+      - default
 
   meta:
     container_name: supabase-meta
@@ -357,6 +373,9 @@ services:
       PG_META_DB_NAME: ${POSTGRES_DB}
       PG_META_DB_USER: supabase_admin
       PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD}
+    networks:
+      - default
+      - backend
 
   functions:
     container_name: supabase-edge-functions
@@ -376,6 +395,9 @@ services:
       SUPABASE_DB_URL: postgresql://postgres:${POSTGRES_PASSWORD}@supabase-db:${POSTGRES_PORT}/${POSTGRES_DB}
       VERIFY_JWT: "${FUNCTIONS_VERIFY_JWT:-true}"
     command: ["start", "--main-service", "/home/deno/functions/main"]
+    networks:
+      - default
+      - backend
 
   analytics:
     container_name: supabase-analytics
@@ -408,6 +430,9 @@ services:
       POSTGRES_BACKEND_URL: postgresql://supabase_admin:${POSTGRES_PASSWORD}@supabase-db:${POSTGRES_PORT}/_supabase
       POSTGRES_BACKEND_SCHEMA: _analytics
       LOGFLARE_FEATURE_FLAG_OVERRIDE: multibackend=true
+    networks:
+      - default
+      - backend
 
   # === The Shared PostgreSQL Database (from Supabase) ===
   # This instance includes the pgvector extension needed by Dify.
@@ -451,6 +476,8 @@ services:
       # Ensure Dify database exists (can be done manually or via init script)
       # DIFY_DB_DATABASE: ${DIFY_DB_DATABASE:-dify} # Reference only, creation needed
     command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "log_min_messages=fatal"]
+    networks:
+      - backend
 
   # Supabase Log Shipper (NOT the vector database itself)
   vector:
@@ -470,6 +497,9 @@ services:
     command: ["--config", "/etc/vector/vector.yml"]
     security_opt:
       - "label=disable"
+    networks:
+      - default
+      - backend
 
   # Supabase Connection Pooler
   supavisor:
@@ -511,7 +541,8 @@ services:
       POOLER_MAX_CLIENT_CONN: ${POOLER_MAX_CLIENT_CONN:-200}
       POOLER_POOL_MODE: transaction
     command: ["/bin/sh", "-c", "/app/bin/migrate && /app/bin/supavisor eval \"$$(cat /etc/pooler/pooler.exs)\" && /app/bin/server"]
-
+    networks:
+      - backend
 
   # === Dify Services ===
 
@@ -651,8 +682,8 @@ services:
     volumes:
       - ./volumes/plugin_daemon:/app/storage
     depends_on: # Needs DB access
-        supabase-db:
-            condition: service_healthy
+      supabase-db:
+        condition: service_healthy
     networks:
       - ssrf_proxy_network
       - default
@@ -680,7 +711,8 @@ services:
     image: caddy:latest
     hostname: caddy
     container_name: caddy
-    networks: ['demo']
+    networks:
+      - default
     restart: unless-stopped
     env_file:
       - .env
